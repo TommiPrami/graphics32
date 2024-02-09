@@ -559,12 +559,6 @@ type
   TWrapProc = function(Value, Max: Integer): Integer;
   TWrapProcEx = function(Value, Min, Max: Integer): Integer;
 
-{$IFDEF DEPRECATEDMODE}
-{ Stretch filters }
-  TStretchFilter = (sfNearest, sfDraft, sfLinear, sfCosine, sfSpline,
-    sfLanczos, sfMitchell);
-{$ENDIF}
-
 type
   { TPlainInterfacedPersistent }
   { TPlainInterfacedPersistent provides simple interface support with
@@ -609,8 +603,8 @@ type
     property Modified: boolean read FModified;
   public
     procedure BeforeDestruction; override;
-    procedure BeginUpdate; {$IFDEF USEINLINING} inline; {$ENDIF}
-    procedure EndUpdate; {$IFDEF USEINLINING} inline; {$ENDIF}
+    procedure BeginUpdate; virtual;
+    procedure EndUpdate; virtual;
     procedure Changed; virtual;
 
     procedure BeginLockUpdate; {$IFDEF USEINLINING} inline; {$ENDIF}
@@ -719,9 +713,6 @@ type
     FStippleCounter: Single;
     FStipplePattern: TArrayOfColor32;
     FStippleStep: Single;
-{$IFDEF DEPRECATEDMODE}
-    FStretchFilter: TStretchFilter;
-{$ENDIF}
     FOnPixelCombine: TPixelCombineEvent;
     FOnAreaChanged: TAreaChangedEvent;
     FOldOnAreaChanged: TAreaChangedEvent;
@@ -739,9 +730,6 @@ type
     procedure SetDrawMode(Value: TDrawMode);
     procedure SetWrapMode(Value: TWrapMode);
     procedure SetMasterAlpha(Value: Cardinal);
-{$IFDEF DEPRECATEDMODE}
-    procedure SetStretchFilter(Value: TStretchFilter);
-{$ENDIF}
     procedure SetClipRect(const Value: TRect);
     procedure SetResampler(AResampler: TCustomResampler);
     function GetResamplerClassName: string;
@@ -762,8 +750,6 @@ type
     RasterX, RasterY: Integer;
     RasterXF, RasterYF: TFixed;
     procedure ChangeSize(var Width, Height: Integer; NewWidth, NewHeight: Integer); override;
-    procedure CopyMapTo(Dst: TCustomBitmap32); virtual;
-    procedure CopyPropertiesTo(Dst: TCustomBitmap32); virtual;
     function  Equal(B: TCustomBitmap32): Boolean;
     procedure ReadData(Stream: TStream); virtual;
     procedure WriteData(Stream: TStream); virtual;
@@ -779,6 +765,9 @@ type
 {$ENDIF}
 
   protected
+    procedure CopyMapTo(Dst: TCustomBitmap32); virtual;
+    procedure CopyPropertiesTo(Dst: TCustomBitmap32); virtual;
+
     procedure AssignTo(Dst: TPersistent); override;
     procedure DefineProperties(Filer: TFiler); override;
 
@@ -986,9 +975,6 @@ type
     property WrapMode: TWrapMode read FWrapMode write SetWrapMode default wmClamp;
     property MasterAlpha: Cardinal read FMasterAlpha write SetMasterAlpha default $FF;
     property OuterColor: TColor32 read FOuterColor write FOuterColor default 0;
-{$IFDEF DEPRECATEDMODE}
-    property StretchFilter: TStretchFilter read FStretchFilter write SetStretchFilter default sfNearest;
-{$ENDIF}
     property ResamplerClassName: string read GetResamplerClassName write SetResamplerClassName;
     property Resampler: TCustomResampler read FResampler write SetResampler;
     property OnChange;
@@ -1199,7 +1185,6 @@ uses
 {$ELSE}
   GR32_Backends_VCL,
 {$ENDIF}
-  GR32_VectorUtils,
   GR32.ImageFormats,
   GR32.ImageFormats.Default;
 
@@ -2889,9 +2874,6 @@ begin
   Dst.MasterAlpha := MasterAlpha;
   Dst.OuterColor := OuterColor;
 
-{$IFDEF DEPRECATEDMODE}
-  Dst.StretchFilter := StretchFilter;
-{$ENDIF}
   Dst.ResamplerClassName := ResamplerClassName;
   if (Dst.Resampler <> nil) and (Resampler <> nil) then
     Dst.Resampler.Assign(Resampler);
@@ -4682,6 +4664,60 @@ begin
   LineX(Fixed(X1), Fixed(Y1), Fixed(X2), Fixed(Y2), Value, L);
 end;
 
+// Note:
+// ClipLine has been copied from GR32_VectorUtils to avoid referencing that unit here
+// since that would prevent inlining in GR32_VectorUtils due to
+// H2456 Inline function '%s' has not been expanded because contained unit '%s' uses compiling unit '%s'
+function ClipLine(var X1, Y1, X2, Y2: Integer; MinX, MinY, MaxX, MaxY: Integer): Boolean;
+var
+  C1, C2: Integer;
+  V: Integer;
+begin
+  { Get edge codes }
+  C1 := Ord(X1 < MinX) + Ord(X1 > MaxX) shl 1 + Ord(Y1 < MinY) shl 2 + Ord(Y1 > MaxY) shl 3;
+  C2 := Ord(X2 < MinX) + Ord(X2 > MaxX) shl 1 + Ord(Y2 < MinY) shl 2 + Ord(Y2 > MaxY) shl 3;
+
+  if ((C1 and C2) = 0) and ((C1 or C2) <> 0) then
+  begin
+    if (C1 and 12) <> 0 then
+    begin
+      if C1 < 8 then V := MinY else V := MaxY;
+      Inc(X1, MulDiv(V - Y1, X2 - X1, Y2 - Y1));
+      Y1 := V;
+      C1 := Ord(X1 < MinX) + Ord(X1 > MaxX) shl 1;
+    end;
+
+    if (C2 and 12) <> 0 then
+    begin
+      if C2 < 8 then V := MinY else V := MaxY;
+      Inc(X2, MulDiv(V - Y2, X2 - X1, Y2 - Y1));
+      Y2 := V;
+      C2 := Ord(X2 < MinX) + Ord(X2 > MaxX) shl 1;
+    end;
+
+    if ((C1 and C2) = 0) and ((C1 or C2) <> 0) then
+    begin
+      if C1 <> 0 then
+      begin
+        if C1 = 1 then V := MinX else V := MaxX;
+        Inc(Y1, MulDiv(V - X1, Y2 - Y1, X2 - X1));
+        X1 := V;
+        C1 := 0;
+      end;
+
+      if C2 <> 0 then
+      begin
+        if C2 = 1 then V := MinX else V := MaxX;
+        Inc(Y2, MulDiv(V - X2, Y2 - Y1, X2 - X1));
+        X2 := V;
+        C2 := 0;
+      end;
+    end;
+  end;
+
+  Result := (C1 or C2) = 0;
+end;
+
 procedure TCustomBitmap32.LineXS(X1, Y1, X2, Y2: TFixed; Value: TColor32; L: Boolean);
 var
   n, i: Integer;
@@ -5702,6 +5738,7 @@ var
   Channel: TColor32Component;
   Value, NewValue: DWORD;
   Padding: integer;
+  DataSize: integer;
   ScanlineRow: PColor32Array;
 const
 {$IFNDEF RGBA_FORMAT}
@@ -5753,10 +5790,6 @@ begin
   if (Stream.Read(BitmapHeader.InfoHeader.biWidth, ChunkSize) <> ChunkSize) then
     exit;
 
-  // We only support BI_RGB and BI_BITFIELDS compression
-  if (BitmapHeader.InfoHeader.biCompression <> BI_RGB) and (BitmapHeader.InfoHeader.biCompression <> BI_BITFIELDS) then
-    exit;
-
   // We only support 24-bit and 32-bit bitmaps
   if not (BitmapHeader.InfoHeader.biBitCount in [24, 32]) then
     exit;
@@ -5769,21 +5802,45 @@ begin
   if (BitmapHeader.InfoHeader.biWidth < 0) then
     BitmapHeader.InfoHeader.biWidth := -BitmapHeader.InfoHeader.biWidth;
 
-  // Validate compression and fetch RGBA masks
+  // Pad input rows to 32 bits
+  Padding := (SizeOf(DWORD) - (((BitmapHeader.InfoHeader.biBitCount shr 3) * BitmapHeader.InfoHeader.biWidth) and (SizeOf(DWORD)-1))) and (SizeOf(DWORD)-1);
+  DataSize := ((BitmapHeader.InfoHeader.biBitCount shr 3) * BitmapHeader.InfoHeader.biWidth + Padding) * Abs(BitmapHeader.InfoHeader.biHeight);
+  Dec(Size, DataSize);
+
+  if (BitmapHeader.InfoHeader.biCompression = BI_RGB) then
+  begin
+    // Skip color table so we're ready to read the pixel data.
+    // Note: We ignore the pixel offset stored in the header since this
+    // value is often incorrect.
+    if (BitmapHeader.InfoHeader.biClrUsed > 0) then
+    begin
+      Dec(Size, BitmapHeader.InfoHeader.biClrUsed * SizeOf(DWORD));
+      if (Size < 0) then
+        exit;
+      Stream.Seek(BitmapHeader.InfoHeader.biClrUsed * SizeOf(DWORD), soCurrent);
+    end;
+  end else
   if (BitmapHeader.InfoHeader.biCompression = BI_BITFIELDS) then
   begin
-    // Reject invalid 24-bit bitfields
+    // BI_BITFIELDS is only valid for 16 and 32 bit count
     if BitmapHeader.InfoHeader.biBitCount = 24 then
       exit;
 
-    // For versions > v1 the RGB color mask is part of the header so it has already
-    // been read as part of the header. For version = v1 it is stored just after
-    // the header, before the color table.
-    // Note: It seems that the above is not always true in practice; The three mask values
-    // can be present even when they are already part of the header. For example a copy/paste
-    // of a V5 DIB can cause this to happen. Apparently this is a bug in Windows. Since
-    // Windows seems able to work around it we'll try to do that too; If there's exactly 12
-    // bytes too many when we're about to read the pixel data, then we skip 12 bytes ahead.
+    // For versions > v1 the header contains a color mask.
+    // For BI_BITFIELDS the header is additionally followed by a color table with 3
+    // values that can also be interpreted as a color mask.
+    // Because the BI_BITFIELDS layout has been so poorly documented different
+    // interpretations of it has lead to some implementations including the color
+    // table and some excluding it.
+    // This is true even within Windows and its utilities. In particular the Windows
+    // clipboard's handling of CF_DIBV5 appears to produce both variations depending on
+    // various circumstances.
+    //
+    // Since Windows seems able to work around the two different variations we'll try to
+    // do that too; If there's exactly 12 bytes missing when we're about to read the
+    // color table, then we simply skip reading it.
+
+    // For version 1 we always need to get the mask from the color table.
     if (InfoHeaderVersion = InfoHeaderVersion1) then
     begin
       // Read the RGB mask into the v2 header RGB mask fields
@@ -5794,6 +5851,28 @@ begin
 
       if (Stream.Read(BitmapHeader.V2Header.bV2RedMask, ChunkSize) <> ChunkSize) then
         exit;
+    end else
+    begin
+      // Read the color table if it's there.
+
+      // Work around BI_BITFIELDS DIBs that lack the color table after the header;
+      // If there's exactly 12 bytes missing then we assume that these are the missing
+      // color table and ignore it.
+      ChunkSize := 3 * SizeOf(DWORD);
+      if (Size >= ChunkSize) then
+      begin
+        Dec(Size, ChunkSize);
+        // The color table is there but do we need to actually read it?
+        // If the header color masks contains values then we don't need the values in
+        // the color table so we just skip past them. Otherwise we read them into the
+        // header color mask fields.
+        if (BitmapHeader.V2Header.bV2RedMask = 0) and (BitmapHeader.V2Header.bV2GreenMask = 0) and (BitmapHeader.V2Header.bV2BlueMask = 0) then
+        begin
+          if (Stream.Read(BitmapHeader.V2Header.bV2RedMask, ChunkSize) <> ChunkSize) then
+            exit;
+        end else
+          Stream.Seek(ChunkSize, soFromCurrent);
+      end;
     end;
 
     // Check if RGBA mask is present and values are valid
@@ -5835,38 +5914,13 @@ begin
         (BitmapHeader.V3Header.bV3AlphaMask = Masks[ccAlpha]) then
         BitmapHeader.InfoHeader.biCompression := BI_RGB;
     end;
-  end;
-
-  // Skip color table so we're ready to read the pixel data
-  // Note: We ignore the pixel offset stored in the header since this
-  // value is often incorrect.
-  if (BitmapHeader.InfoHeader.biClrUsed > 0) then
-  begin
-    Dec(Size, BitmapHeader.InfoHeader.biClrUsed * SizeOf(DWORD));
-    if (Size < 0) then
-      exit;
-    Stream.Seek(BitmapHeader.InfoHeader.biClrUsed * SizeOf(DWORD), soCurrent);
-  end;
-
-  // Pad input rows to 32 bits
-  Padding := (SizeOf(DWORD) - (((BitmapHeader.InfoHeader.biBitCount shr 3) * BitmapHeader.InfoHeader.biWidth) and (SizeOf(DWORD)-1))) and (SizeOf(DWORD)-1);
-
-  // Make sure there's enough data left for the pixels
-  Dec(Size, ((BitmapHeader.InfoHeader.biBitCount shr 3) * BitmapHeader.InfoHeader.biWidth + Padding) * Abs(BitmapHeader.InfoHeader.biHeight));
-  if (Size < 0) then
+  end else
+    // We only support BI_RGB and BI_BITFIELDS compression
     exit;
 
-  // Work around BMPs with an extra color mask after the header:
-  // If there's exactly 12 bytes too many then we assume that these are an extra
-  // color mask and skip it.
-  // For example the Windows resource compiler will add these 12 bytes to the header
-  // of RT_BITMAP resources. This goes for both BI_RGB and BI_BITFIELDS.
-  if (InfoHeaderVersion >= InfoHeaderVersion1) then
-  begin
-    ChunkSize := 3 * SizeOf(DWORD);
-    if (Size = ChunkSize) then
-      Stream.Seek(ChunkSize, soFromCurrent);
-  end;
+  // Make sure there's enough data left for the pixels
+  if (Size < 0) then
+    exit;
 
   // Set bitmap size and allocate bit pixel data so we can read into it
   SetSize(BitmapHeader.InfoHeader.biWidth, Abs(BitmapHeader.InfoHeader.biHeight));
@@ -6066,27 +6120,26 @@ const
   LCS_GM_IMAGES = 4;
 {$ENDIF}
 var
-  HeaderSize: Cardinal;
   Header: TDIBHeader;
   i: Integer;
   W: Integer;
 begin
+  Header := Default(TDIBHeader);
+
   // Determine info header size based on header version.
   // Note: Formats lower than InfoHeaderVersion3 doesn't formally
   // support alpha but that doesn't mean that we can't store the alpha
   // anyway.
   case InfoHeaderVersion of
-    InfoHeaderVersion1: HeaderSize := SizeOf(TBitmapInfoHeader);// 40
-    InfoHeaderVersion2: HeaderSize := SizeOf(TBitmapV2Header);  // 52
-    InfoHeaderVersion3: HeaderSize := SizeOf(TBitmapV3Header);  // 56
-    InfoHeaderVersion4: HeaderSize := SizeOf(TBitmapV4Header);  // 108
-    InfoHeaderVersion5: HeaderSize := SizeOf(TBitmapV5Header);  // 124
+    InfoHeaderVersion1: Header.InfoHeader.biSize := SizeOf(TBitmapInfoHeader);// 40
+    InfoHeaderVersion2: Header.InfoHeader.biSize := SizeOf(TBitmapV2Header);  // 52
+    InfoHeaderVersion3: Header.InfoHeader.biSize := SizeOf(TBitmapV3Header);  // 56
+    InfoHeaderVersion4: Header.InfoHeader.biSize := SizeOf(TBitmapV4Header);  // 108
+    InfoHeaderVersion5: Header.InfoHeader.biSize := SizeOf(TBitmapV5Header);  // 124
   else
-    raise Exception.Create('Invalid header version');
+    raise Exception.Create('Invalid DIB header version');
   end;
 
-  Header := Default(TDIBHeader);
-  Header.InfoHeader.biSize := HeaderSize;
   Header.InfoHeader.biWidth := Width;
 
   if SaveTopDown then
@@ -6111,11 +6164,6 @@ begin
     Header.V3Header.bV3AlphaMask := $FF000000;
   end;
 
-  if (InfoHeaderVersion < InfoHeaderVersion2) and (Header.InfoHeader.biCompression = BI_BITFIELDS) then
-    // The Version 1 header doesn't include the mask so expand
-    // the header size so the mask will be written.
-    Inc(HeaderSize, 12);
-
   if (Header.InfoHeader.biCompression = BI_BITFIELDS) then
   begin
     // We only support the bit masks that correspond directly to the ABGR format.
@@ -6131,7 +6179,12 @@ begin
   if (InfoHeaderVersion >= InfoHeaderVersion5) then
     Header.V5Header.bV5Intent := LCS_GM_IMAGES;
 
-  Stream.WriteBuffer(Header, HeaderSize);
+  Stream.WriteBuffer(Header, Header.InfoHeader.biSize);
+
+  // Write the color table.
+  // This is just a duplication of the first three fields of the header color mask.
+  if (Header.InfoHeader.biCompression = BI_BITFIELDS) then
+    Stream.WriteBuffer(Header.V2Header.bV2RedMask, 3*SizeOf(DWORD));
 
   // Pixel array
 {$IFNDEF RGBA_FORMAT}
@@ -6375,33 +6428,6 @@ begin
     Changed;
   end;
 end;
-
-{$IFDEF DEPRECATEDMODE}
-procedure TCustomBitmap32.SetStretchFilter(Value: TStretchFilter);
-begin
-  if FStretchFilter <> Value then
-  begin
-    FStretchFilter := Value;
-
-    case FStretchFilter of
-      sfNearest: TNearestResampler.Create(Self);
-      sfDraft:   TDraftResampler.Create(Self);
-      sfLinear:  TLinearResampler.Create(Self);
-    else
-      TKernelResampler.Create(Self);
-      with FResampler as TKernelResampler do
-        case FStretchFilter of
-          sfCosine: Kernel := TCosineKernel.Create;
-          sfSpline: Kernel := TSplineKernel.Create;
-          sfLanczos: Kernel := TLanczosKernel.Create;
-          sfMitchell: Kernel := TMitchellKernel.Create;
-        end;
-    end;
-
-    Changed;
-  end;
-end;
-{$ENDIF}
 
 procedure TCustomBitmap32.Roll(Dx, Dy: Integer; FillBack: Boolean; FillColor: TColor32);
 var

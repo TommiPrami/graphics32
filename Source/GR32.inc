@@ -56,18 +56,6 @@
 
 
 
-(* Symbol DEPRECATEDMODE :
-   -----------------------
-
-      Defines if GR32 should behave like version 1.7.x and down.
-
-   NOTE: Support for this will be dropped at some time and is only provided
-   for transition *)
-
-  {-$DEFINE DEPRECATEDMODE}
-
-
-
 (* Symbol CHANGED_IN_PIXELS :
    --------------------------
 
@@ -190,19 +178,6 @@
 *)
 
   {-$DEFINE OMIT_SSE2}
-
-
-(*
-  Symbol: USEGR32GAMMA
-  --------------------
-
-    If defined the polygon rasterizer will use the GR32 gamma correction LUT.
-
-  Disable for a slight performance increase.
-*)
-
-{$DEFINE USEGR32GAMMA}
-
 
 
 (*
