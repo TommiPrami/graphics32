@@ -28,11 +28,6 @@ unit GR32_Layers;
  * Portions created by the Initial Developer are Copyright (C) 2000-2009
  * the Initial Developer. All Rights Reserved.
  *
- * Contributor(s):
- * Andre Beckedorf <Andre@metaException.de>
- * Michael Hansen <dyster_tid@hotmail.com>
- * Dieter Köhler <dieter.koehler@philo.de>
- *
  * ***** END LICENSE BLOCK ***** *)
 
 interface
@@ -40,24 +35,39 @@ interface
 {$INCLUDE GR32.inc}
 
 uses
-{$IFDEF FPC}
-  Controls, Graphics, Forms,
-{$ELSE}
-  Windows, Controls, Graphics, Forms,
-{$ENDIF}
+{$if defined(FRAMEWORK_VCL)}
+  System.UITypes,
+  WinApi.Windows,
+  Vcl.Controls,
+  Vcl.Graphics,
+  Vcl.Forms,
+{$elseif defined(FRAMEWORK_FMX)}
+  System.UITypes,
+  WinApi.Windows,
+  FMX.Types,
+  FMX.Controls,
+  FMX.Graphics,
+  FMX.Forms,
+{$elseif defined(FRAMEWORK_LCL)}
+  Controls,
+  Graphics,
+  Forms,
+{$ifend}
   Generics.Collections,
-  Classes, SysUtils, Math,
+  Classes,
+  SysUtils,
+  Math,
   GR32;
 
 const
   { Layer Options Bits }
-  LOB_VISIBLE           = $80000000; // 31-st bit
-  LOB_GDI_OVERLAY       = $40000000; // 30-th bit
-  LOB_MOUSE_EVENTS      = $20000000; // 29-th bit
-  LOB_NO_UPDATE         = $10000000; // 28-th bit
-  LOB_NO_CAPTURE        = $08000000; // 27-th bit
-  LOB_INVALID           = $04000000; // 26-th bit
-  LOB_FORCE_UPDATE      = $02000000; // 25-th bit
+  LOB_VISIBLE           = $80000000; // 31-st bit: Controls the layer visibility
+  LOB_GDI_OVERLAY       = $40000000; // 30-th bit: Indicates that the layer performs drawing when its owner draws its GDI Overlays.
+  LOB_MOUSE_EVENTS      = $20000000; // 29-th bit: Specifies whether the layer responds to mouse messages.
+  LOB_NO_UPDATE         = $10000000; // 28-th bit: Disables automatic repainting when the layer changes its location or other properties.
+  LOB_NO_CAPTURE        = $08000000; // 27-th bit: Allows to override automatic capturing of mouse messages when the left mouse is pressed on top of the layer. This bit has no effect if LOB_MOUSE_EVENTS is not set.
+  LOB_INVALID           = $04000000; // 26-th bit: Used internall by repaint optimizer.
+  LOB_FORCE_UPDATE      = $02000000; // 25-th bit: Used internally to force a layer to update when it is being hidden.
   LOB_RESERVED_24       = $01000000; // 24-th bit
   LOB_RESERVED_MASK     = $FF000000;
 
@@ -134,7 +144,7 @@ type
     function  GetOwner: TPersistent; override;
     procedure GDIUpdate;
     procedure DoUpdateLayer(Layer: TCustomLayer);
-    procedure DoUpdateArea(const Rect: TRect);
+    procedure DoUpdateArea(const Rect: TRect; const Info: Cardinal);
     procedure Notify(Action: TLayerListNotification; Layer: TCustomLayer; Index: Integer);
     procedure SetItem(Index: Integer; Value: TCustomLayer);
     function MouseDown(Button: TMouseButton; Shift: TShiftState; X, Y: Integer): TCustomLayer;
@@ -179,7 +189,6 @@ type
 
   TLayerCollectionClass = class of TLayerCollection;
 
-{$IFDEF COMPILER2009_UP}
   TLayerEnum = class
    private
      FIndex: Integer;
@@ -197,7 +206,6 @@ type
    public
      function GetEnumerator: TLayerEnum;
    end;
-{$ENDIF}
 
   TLayerState = (lsMouseLeft, lsMouseRight, lsMouseMiddle);
   TLayerStates = set of TLayerState;
@@ -234,8 +242,8 @@ type
   protected
     procedure AddNotification(ALayer: TCustomLayer);
     procedure Changing;
-    procedure Click;
-    procedure DblClick;
+    procedure Click; virtual;
+    procedure DblClick; virtual;
     function  DoHitTest(X, Y: Integer): Boolean; virtual;
     procedure DoPaint(Buffer: TBitmap32);
     function  GetOwner: TPersistent; override;
@@ -251,7 +259,10 @@ type
     procedure SetLayerCollection(Value: TLayerCollection); virtual;
     procedure SetLayerOptions(Value: Cardinal); virtual;
     procedure DoChanged; overload; override;
-
+    procedure AreaUpdated(const AArea: TRect; const AInfo: Cardinal);
+    procedure UpdateRect(const ARect: TRect);
+    procedure Update(const ARect: TRect); overload; deprecated 'Use UpdateRect';
+    procedure Changed(const Rect: TRect; const Info: Cardinal = 0); reintroduce; overload;
     property Invalid: Boolean read GetInvalid write SetInvalid;
     property ForceUpdate: Boolean read GetForceUpdate write SetForceUpdate;
   public
@@ -260,12 +271,19 @@ type
 
     procedure BeforeDestruction; override;
     procedure BringToFront;
-    procedure Changed(const Rect: TRect); reintroduce; overload;
     procedure Update; overload; virtual;
-    procedure Update(const Rect: TRect); overload;
     function  HitTest(X, Y: Integer): Boolean;
     procedure SendToBack;
     procedure SetAsMouseListener;
+
+    function LayerToControl(const p: TPoint; AScaleFromContent: boolean): TPoint; overload; virtual;
+    function LayerToControl(const r: TRect; AScaleFromContent: boolean): TRect; overload; virtual;
+    function LayerToControl(const p: TFloatPoint; AScaleFromContent: boolean): TFloatPoint; overload; virtual;
+    function LayerToControl(const r: TFloatRect; AScaleFromContent: boolean): TFloatRect; overload; virtual;
+    function ControlToLayer(const p: TPoint; AScaleToContent: boolean): TPoint; overload; virtual;
+    function ControlToLayer(const r: TRect; AScaleToContent: boolean): TRect; overload; virtual;
+    function ControlToLayer(const p: TFloatPoint; AScaleToContent: boolean): TFloatPoint; overload; virtual;
+    function ControlToLayer(const r: TFloatRect; AScaleToContent: boolean): TFloatRect; overload; virtual;
 
     property Cursor: TCursor read FCursor write SetCursor;
     property Index: Integer read GetIndex write SetIndex;
@@ -300,10 +318,22 @@ type
     procedure DoSetLocation(const NewLocation: TFloatRect); virtual;
     function DoGetUpdateRect: TRect; virtual;
     function GetUpdateRect: TRect;
+    // GetContentSize: Size of layer content (e.g. the bitmap if is has one).
+    // Used to translate between viewport (layer) and content coordinates.
+    function GetContentSize: TPoint; virtual;
   public
     constructor Create(ALayerCollection: TLayerCollection); override;
 
     procedure Update; override;
+
+    function LayerToControl(const APoint: TPoint; AScaleFromContent: boolean): TPoint; overload; override;
+    function LayerToControl(const ARect: TRect; AScaleFromContent: boolean): TRect; overload; override;
+    function LayerToControl(const APoint: TFloatPoint; AScaleFromContent: boolean): TFloatPoint; overload; override;
+    function LayerToControl(const ARect: TFloatRect; AScaleFromContent: boolean): TFloatRect; overload; override;
+    function ControlToLayer(const APoint: TPoint; AScaleToContent: boolean): TPoint; overload; override;
+    function ControlToLayer(const ARect: TRect; AScaleToContent: boolean): TRect; overload; override;
+    function ControlToLayer(const APoint: TFloatPoint; AScaleToContent: boolean): TFloatPoint; overload; override;
+    function ControlToLayer(const ARect: TFloatRect; AScaleToContent: boolean): TFloatRect; overload; override;
 
     function GetAdjustedRect(const R: TFloatRect): TFloatRect; virtual;
     function GetAdjustedLocation: TFloatRect;
@@ -326,6 +356,7 @@ type
   protected
     function DoHitTest(X, Y: Integer): Boolean; override;
     procedure Paint(Buffer: TBitmap32); override;
+    function GetContentSize: TPoint; override;
   protected
     procedure BitmapAreaChanged(Sender: TObject; const Area: TRect; const Info: Cardinal);
     procedure SetBitmap(Value: TCustomBitmap32); virtual;
@@ -335,6 +366,7 @@ type
     constructor Create(ALayerCollection: TLayerCollection); overload; override;
     constructor Create(ALayerCollection: TLayerCollection; ABitmap: TCustomBitmap32); reintroduce; overload;
     destructor Destroy; override;
+
 
     property AlphaHit: Boolean read FAlphaHit write FAlphaHit;
     property Cropped: Boolean read FCropped write SetCropped;
@@ -615,7 +647,10 @@ begin
   BeginUpdate;
   try
     while FItems.Count > 0 do
+    begin
+      TCustomLayer(FItems.Last).Visible := False;
       TCustomLayer(FItems.Last).Free;
+    end;
     Notify(lnCleared, nil, 0);
     Changed;
   finally
@@ -625,6 +660,9 @@ end;
 
 procedure TLayerCollection.Delete(Index: Integer);
 begin
+  // Hide layer so the area covered by it will be invalidated
+  TCustomLayer(FItems[Index]).Visible := False;
+
   TCustomLayer(FItems[Index]).Free;
 end;
 
@@ -730,7 +768,7 @@ begin
   else
     Result := FindLayerAtPos(X, Y, LOB_MOUSE_EVENTS);
 
-  if (Result <> MouseListener) and ((Result = nil) or ((Result.FLayerOptions and LOB_NO_CAPTURE) = 0)) then
+  if (Result <> MouseListener) and ((Result = nil) or (Result.FLayerOptions and LOB_NO_CAPTURE = 0)) then
     MouseListener := Result; // capture the mouse
 
   if (MouseListener <> nil) then
@@ -838,7 +876,7 @@ begin
     FSubscribers.Remove(ASubscriber);
 end;
 
-procedure TLayerCollection.DoUpdateArea(const Rect: TRect);
+procedure TLayerCollection.DoUpdateArea(const Rect: TRect; const Info: Cardinal);
 var
   i: integer;
   UpdateRectNotification: IUpdateRectNotification;
@@ -846,10 +884,10 @@ begin
   if (FSubscribers <> nil) then
     for i := FSubscribers.Count-1 downto 0 do
       if (Supports(FSubscribers[i], IUpdateRectNotification, UpdateRectNotification)) then
-        UpdateRectNotification.AreaUpdated(Rect, AREAINFO_RECT);
+        UpdateRectNotification.AreaUpdated(Rect, Info);
 
   if Assigned(FOnAreaUpdated) then
-    FOnAreaUpdated(Self, Rect, AREAINFO_RECT);
+    FOnAreaUpdated(Self, Rect, Info);
 
   Changed;
 end;
@@ -893,7 +931,6 @@ begin
 end;
 
 
-{$IFDEF COMPILER2009_UP}
 { TLayerEnum }
 
 constructor TLayerEnum.Create(ALayerCollection: TLayerCollection);
@@ -922,7 +959,6 @@ function TLayerCollectionHelper.GetEnumerator: TLayerEnum;
 begin
   Result := TLayerEnum.Create(Self);
 end;
-{$ENDIF}
 
 
 { TCustomLayer }
@@ -974,35 +1010,28 @@ end;
 
 procedure TCustomLayer.DoChanged;
 begin
-  if (FLayerCollection <> nil) and ((FLayerOptions and LOB_NO_UPDATE) = 0) then
+  if (FLayerCollection <> nil) and (FLayerOptions and LOB_NO_UPDATE = 0) then
   begin
     Update;
 
     if Visible then
       FLayerCollection.Changed
     else
-    if (FLayerOptions and LOB_GDI_OVERLAY) <> 0 then
+    if (FLayerOptions and LOB_GDI_OVERLAY <> 0) then
       FLayerCollection.GDIUpdate;
 
     inherited;
   end;
 end;
 
-procedure TCustomLayer.Changed(const Rect: TRect);
+procedure TCustomLayer.Changed(const Rect: TRect; const Info: Cardinal);
 begin
   if UpdateCount > 0 then
     Exit;
 
-  if (FLayerCollection <> nil) and ((FLayerOptions and LOB_NO_UPDATE) = 0) then
+  if (FLayerCollection <> nil) and (FLayerOptions and LOB_NO_UPDATE = 0) then
   begin
-    Update(Rect);
-
-    if Visible then
-      FLayerCollection.Changed
-    else
-    if (FLayerOptions and LOB_GDI_OVERLAY) <> 0 then
-      FLayerCollection.GDIUpdate;
-
+    AreaUpdated(Rect, Info);
     inherited DoChanged;
   end;
 end;
@@ -1015,7 +1044,7 @@ begin
   if UpdateCount > 0 then
     Exit;
 
-  if Visible and (FLayerCollection <> nil) and ((FLayerOptions and LOB_NO_UPDATE) = 0) then
+  if Visible and (FLayerCollection <> nil) and (FLayerOptions and LOB_NO_UPDATE = 0) then
     FLayerCollection.Changing;
 end;
 
@@ -1055,7 +1084,7 @@ end;
 
 function TCustomLayer.GetMouseEvents: Boolean;
 begin
-  Result := FLayerOptions and LOB_MOUSE_EVENTS <> 0;
+  Result := (FLayerOptions and LOB_MOUSE_EVENTS <> 0);
 end;
 
 function TCustomLayer.GetOwner: TPersistent;
@@ -1065,7 +1094,7 @@ end;
 
 function TCustomLayer.GetVisible: Boolean;
 begin
-  Result := FLayerOptions and LOB_VISIBLE <> 0;
+  Result := (FLayerOptions and LOB_VISIBLE <> 0);
 end;
 
 function TCustomLayer.HitTest(X, Y: Integer): Boolean;
@@ -1074,6 +1103,52 @@ begin
   if Assigned(FOnHitTest) then
     FOnHitTest(Self, X, Y, Result);
 end;
+
+//------------------------------------------------------------------------------
+
+function TCustomLayer.ControlToLayer(const p: TPoint; AScaleToContent: boolean): TPoint;
+begin
+  Result := p;
+end;
+
+function TCustomLayer.ControlToLayer(const r: TRect; AScaleToContent: boolean): TRect;
+begin
+  Result := r;
+end;
+
+function TCustomLayer.ControlToLayer(const r: TFloatRect; AScaleToContent: boolean): TFloatRect;
+begin
+  Result := r;
+end;
+
+function TCustomLayer.ControlToLayer(const p: TFloatPoint; AScaleToContent: boolean): TFloatPoint;
+begin
+  Result := p;
+end;
+
+//------------------------------------------------------------------------------
+
+function TCustomLayer.LayerToControl(const r: TRect; AScaleFromContent: boolean): TRect;
+begin
+  Result := r;
+end;
+
+function TCustomLayer.LayerToControl(const p: TPoint; AScaleFromContent: boolean): TPoint;
+begin
+  Result := p;
+end;
+
+function TCustomLayer.LayerToControl(const p: TFloatPoint; AScaleFromContent: boolean): TFloatPoint;
+begin
+  Result := p;
+end;
+
+function TCustomLayer.LayerToControl(const r: TFloatRect; AScaleFromContent: boolean): TFloatRect;
+begin
+  Result := r;
+end;
+
+//------------------------------------------------------------------------------
 
 procedure TCustomLayer.MouseDown(Button: TMouseButton; Shift: TShiftState; X, Y: Integer);
 begin
@@ -1228,20 +1303,37 @@ end;
 
 procedure TCustomLayer.Update;
 begin
-  if (FLayerCollection <> nil) and (Visible or (LayerOptions and LOB_FORCE_UPDATE <> 0)) then
+  if (FLayerCollection <> nil) and (Visible or ForceUpdate) then
     FLayerCollection.DoUpdateLayer(Self);
 end;
 
-procedure TCustomLayer.Update(const Rect: TRect);
+procedure TCustomLayer.Update(const ARect: TRect);
+begin
+  UpdateRect(ARect);
+end;
+
+procedure TCustomLayer.UpdateRect(const ARect: TRect);
+begin
+  AreaUpdated(ARect, AREAINFO_RECT);
+end;
+
+procedure TCustomLayer.AreaUpdated(const AArea: TRect; const AInfo: Cardinal);
 begin
   // Note: Rect is in ViewPort coordinates
-  if (FLayerCollection <> nil) then
-    FLayerCollection.DoUpdateArea(Rect);
+
+  if (FLayerCollection = nil) then
+    exit;
+
+  if (Visible or ForceUpdate) then
+    FLayerCollection.DoUpdateArea(AArea, AInfo)
+  else
+  if (FLayerOptions and LOB_GDI_OVERLAY) <> 0 then
+    FLayerCollection.GDIUpdate;
 end;
 
 function TCustomLayer.GetInvalid: Boolean;
 begin
-  Result := LayerOptions and LOB_INVALID <> 0;
+  Result := (LayerOptions and LOB_INVALID <> 0);
 end;
 
 procedure TCustomLayer.SetInvalid(Value: Boolean);
@@ -1256,7 +1348,7 @@ end;
 
 function TCustomLayer.GetForceUpdate: Boolean;
 begin
-  Result := LayerOptions and LOB_FORCE_UPDATE <> 0;
+  Result := (LayerOptions and LOB_FORCE_UPDATE <> 0);
 end;
 
 procedure TCustomLayer.SetForceUpdate(Value: Boolean);
@@ -1296,6 +1388,8 @@ begin
   FLocation := NewLocation;
 end;
 
+//------------------------------------------------------------------------------
+
 function TPositionedLayer.GetAdjustedLocation: TFloatRect;
 begin
   Result := GetAdjustedRect(FLocation);
@@ -1322,6 +1416,174 @@ begin
     Result := R;
 end;
 
+//------------------------------------------------------------------------------
+
+function TPositionedLayer.GetContentSize: TPoint;
+begin
+  Result.X := 0;
+  Result.Y := 0;
+end;
+
+//------------------------------------------------------------------------------
+
+function TPositionedLayer.ControlToLayer(const APoint: TPoint; AScaleToContent: boolean): TPoint;
+begin
+  Result := GR32.Point(ControlToLayer(FloatPoint(APoint), AScaleToContent));
+end;
+
+function TPositionedLayer.ControlToLayer(const ARect: TRect; AScaleToContent: boolean): TRect;
+begin
+  Result := MakeRect(ControlToLayer(FloatRect(ARect), AScaleToContent), rrOutside);
+end;
+
+function TPositionedLayer.ControlToLayer(const APoint: TFloatPoint; AScaleToContent: boolean): TFloatPoint;
+var
+  ViewPort: TFloatRect;
+  Size: TPoint;
+  LayerWidth, LayerHeight: TFloat;
+begin
+  if Scaled and (FLayerCollection <> nil) then
+  begin
+    ViewPort := GetAdjustedLocation;
+    Result := APoint - ViewPort.TopLeft;
+
+    if (AScaleToContent) then
+    begin
+      LayerWidth := ViewPort.Width;
+      LayerHeight := ViewPort.Height;
+
+      Size := GetContentSize;
+
+      if (not Size.IsZero) and (LayerWidth > 0.5) and (LayerHeight > 0.5) and
+        ((Size.X <> LayerWidth) or (Size.Y <> LayerHeight)) then
+      begin
+        Result.X := Result.X * Size.X / LayerWidth;
+        Result.Y := Result.Y * Size.Y / LayerHeight;
+      end;
+    end;
+  end else
+    Result := APoint - FLocation.TopLeft;
+end;
+
+function TPositionedLayer.ControlToLayer(const ARect: TFloatRect; AScaleToContent: boolean): TFloatRect;
+var
+  ViewPort: TFloatRect;
+  Size: TPoint;
+  LayerWidth, LayerHeight: TFloat;
+begin
+  Result := ARect;
+
+  if Scaled and (FLayerCollection <> nil) then
+  begin
+    ViewPort := GetAdjustedLocation;
+    Result.Offset(-ViewPort.Top, -ViewPort.Left);
+
+    if (AScaleToContent) then
+    begin
+      LayerWidth := ViewPort.Width;
+      LayerHeight := ViewPort.Height;
+
+      Size := GetContentSize;
+
+      if (not Size.IsZero) and (LayerWidth > 0.5) and (LayerHeight > 0.5) and
+        ((Size.X <> LayerWidth) or (Size.Y <> LayerHeight)) then
+      begin
+        LayerWidth := Size.X / LayerWidth;
+        LayerHeight := Size.Y / LayerHeight;
+
+        Result.Left := Result.Left * LayerWidth;
+        Result.Top := Result.Top * LayerHeight;
+        Result.Right := Result.Right * LayerWidth;
+        Result.Bottom := Result.Bottom * LayerHeight;
+      end;
+    end;
+  end else
+    Result.Offset(-FLocation.Top, -FLocation.Left);
+end;
+
+//------------------------------------------------------------------------------
+
+function TPositionedLayer.LayerToControl(const ARect: TRect; AScaleFromContent: boolean): TRect;
+begin
+  Result := MakeRect(LayerToControl(FloatRect(ARect), AScaleFromContent), rrOutside);
+end;
+
+function TPositionedLayer.LayerToControl(const APoint: TPoint; AScaleFromContent: boolean): TPoint;
+begin
+  Result := GR32.Point(LayerToControl(FloatPoint(APoint), AScaleFromContent));
+end;
+
+function TPositionedLayer.LayerToControl(const APoint: TFloatPoint; AScaleFromContent: boolean): TFloatPoint;
+var
+  ViewPort: TFloatRect;
+  Size: TPoint;
+  LayerWidth, LayerHeight: TFloat;
+begin
+  Result := APoint;
+
+  if Scaled and (FLayerCollection <> nil) then
+  begin
+    ViewPort := GetAdjustedLocation;
+
+    if (AScaleFromContent) then
+    begin
+      LayerWidth := ViewPort.Width;
+      LayerHeight := ViewPort.Height;
+
+      Size := GetContentSize;
+
+      if (not Size.IsZero) and (LayerWidth > 0.5) and (LayerHeight > 0.5) and
+        ((Size.X <> LayerWidth) or (Size.Y <> LayerHeight)) then
+      begin
+        Result.X := Result.X * LayerWidth / Size.X;
+        Result.Y := Result.Y * LayerHeight / Size.Y;
+      end;
+    end;
+
+    Result.Offset(ViewPort.TopLeft);
+  end else
+    Result.Offset(FLocation.TopLeft);
+end;
+
+function TPositionedLayer.LayerToControl(const ARect: TFloatRect; AScaleFromContent: boolean): TFloatRect;
+var
+  ViewPort: TFloatRect;
+  Size: TPoint;
+  LayerWidth, LayerHeight: TFloat;
+begin
+  Result := ARect;
+
+  if Scaled and (FLayerCollection <> nil) then
+  begin
+    ViewPort := GetAdjustedLocation;
+
+    if (AScaleFromContent) then
+    begin
+      LayerWidth := ViewPort.Width;
+      LayerHeight := ViewPort.Height;
+
+      Size := GetContentSize;
+
+      if (not Size.IsZero) and (LayerWidth > 0.5) and (LayerHeight > 0.5) and
+        ((Size.X <> LayerWidth) or (Size.Y <> LayerHeight)) then
+      begin
+        LayerWidth := LayerWidth / Size.X;
+        LayerHeight := LayerHeight / Size.Y;
+
+        Result.Left := Result.Left * LayerWidth;
+        Result.Top := Result.Top * LayerHeight;
+        Result.Right := Result.Right * LayerWidth;
+        Result.Bottom := Result.Bottom * LayerHeight;
+      end;
+    end;
+
+    Result.Offset(ViewPort.Top, ViewPort.Left);
+  end else
+    Result.Offset(FLocation.Top, FLocation.Left);
+end;
+
+//------------------------------------------------------------------------------
+
 function TPositionedLayer.DoGetUpdateRect: TRect;
 begin
   // Note: Result is in ViewPort coordinates
@@ -1344,7 +1606,7 @@ begin
   Changing;
 
   // Invalidate old location
-  if (FLayerCollection <> nil) and ((FLayerOptions and LOB_NO_UPDATE) = 0) then
+  if (FLayerCollection <> nil) and (FLayerOptions and LOB_NO_UPDATE = 0) then
     Update;
 
   DoSetLocation(Value);
@@ -1355,17 +1617,25 @@ end;
 
 procedure TPositionedLayer.SetScaled(Value: Boolean);
 begin
-  if Value <> FScaled then
-  begin
-    Changing;
-    FScaled := Value;
-    Changed;
-  end;
+  if (Value = FScaled) then
+    exit;
+
+  // Changing Scaled can change size and position so treat it as if we did
+  Changing;
+
+  // Invalidate old location
+  if (FLayerCollection <> nil) and (FLayerOptions and LOB_NO_UPDATE = 0) then
+    Update;
+
+  FScaled := Value;
+
+  // Invalidate new location
+  Changed;
 end;
 
 procedure TPositionedLayer.Update;
 begin
-  Update(GetUpdateRect);
+  UpdateRect(GetUpdateRect);
 end;
 
 { TCustomIndirectBitmapLayer }
@@ -1400,30 +1670,51 @@ begin
   if (FBitmap.Empty) then
     Exit;
 
-  if (FLayerCollection <> nil) and ((FLayerOptions and LOB_NO_UPDATE) = 0) then
+  if (Area.Left = Area.Right) or (Area.Top = Area.Bottom) then // Don't use IsEmpty; Rect can be negative
+    Exit; // Empty area
+
+  if (FLayerCollection = nil) or (FLayerOptions and LOB_NO_UPDATE <> 0) then
+    exit;
+
+  r := GetAdjustedLocation;
+
+  ScaleX := r.Width / FBitmap.Width;
+  ScaleY := r.Height / FBitmap.Height;
+
+  // Common case: Positive rect
+  // More rare: Negative rect (e.g. line going from right to left)
+  if (Area.Left < Area.Right) then
   begin
-    r := GetAdjustedLocation;
-
-    { TODO : Optimize me! }
-    ScaleX := (r.Right - r.Left) / FBitmap.Width;
-    ScaleY := (r.Bottom - r.Top) / FBitmap.Height;
-
     T.Left := Floor(r.Left + Area.Left * ScaleX);
-    T.Top := Floor(r.Top + Area.Top * ScaleY);
     T.Right := Ceil(r.Left + Area.Right * ScaleX);
-    T.Bottom := Ceil(r.Top + Area.Bottom * ScaleY);
-
-    Width := Trunc(FBitmap.Resampler.Width) + 1;
-    InflateArea(T, Width, Width);
-
-    Changed(T);
+  end else
+  begin
+    T.Left := Ceil(r.Left + Area.Left * ScaleX);
+    T.Right := Floor(r.Left + Area.Right * ScaleX);
   end;
+
+  if (Area.Top < Area.Bottom) then
+  begin
+    T.Top := Floor(r.Top + Area.Top * ScaleY);
+    T.Bottom := Ceil(r.Top + Area.Bottom * ScaleY);
+  end else
+  begin
+    T.Top := Ceil(r.Top + Area.Top * ScaleY);
+    T.Bottom := Floor(r.Top + Area.Bottom * ScaleY);
+  end;
+
+  // TODO : Possible scaling issue here; Should Width be scaled?
+  // See: TCustomImage32.BitmapAreaChangeHandler
+  Width := Ceil(FBitmap.Resampler.Width);
+  InflateArea(T, Width, Width);
+
+  Changed(T, Info);
 end;
 
 function TCustomIndirectBitmapLayer.DoHitTest(X, Y: Integer): Boolean;
 var
   BitmapX, BitmapY: Integer;
-  LayerWidth, LayerHeight: Integer;
+  LayerWidth, LayerHeight: TFloat;
   r: TFloatRect;
 begin
   Result := inherited DoHitTest(X, Y);
@@ -1432,8 +1723,8 @@ begin
   begin
     r := GetAdjustedRect(FLocation);
 
-    LayerWidth := Round(r.Right - r.Left);
-    LayerHeight := Round(r.Bottom - r.Top);
+    LayerWidth := r.Width;
+    LayerHeight := r.Height;
 
     if (LayerWidth < 0.5) or (LayerHeight < 0.5) then
       Result := False
@@ -1452,7 +1743,6 @@ procedure TCustomIndirectBitmapLayer.Paint(Buffer: TBitmap32);
 var
   SrcRect, DstRect, ClipRect, TempRect: TRect;
   ImageRect: TRect;
-  LayerWidth, LayerHeight: TFloat;
 begin
   if (FBitmap = nil) or (FBitmap.Empty) then
     Exit;
@@ -1467,9 +1757,7 @@ begin
   if Cropped and (LayerCollection.FOwner is TCustomImage32) and
     not (TImage32Access(LayerCollection.FOwner).PaintToMode) then
   begin
-    LayerWidth := DstRect.Right - DstRect.Left;
-    LayerHeight := DstRect.Bottom - DstRect.Top;
-    if (LayerWidth < 0.5) or (LayerHeight < 0.5) then
+    if (DstRect.Width < 0.5) or (DstRect.Height < 0.5) then
       Exit;
     ImageRect := TCustomImage32(LayerCollection.FOwner).GetBitmapRect;
     GR32.IntersectRect(ClipRect, ClipRect, ImageRect);
@@ -1489,6 +1777,12 @@ begin
 
   if (FBitmap <> nil) then
     FBitmap.OnAreaChanged := BitmapAreaChanged;
+end;
+
+function TCustomIndirectBitmapLayer.GetContentSize: TPoint;
+begin
+  Result.X := Bitmap.Width;
+  Result.Y := Bitmap.Height;
 end;
 
 function TCustomIndirectBitmapLayer.OwnsBitmap: boolean;
@@ -2113,13 +2407,13 @@ end;
 procedure TRubberbandLayer.UpdateFrame(Buffer: TBitmap32; const R: TRect);
 begin
   // Left
-  Update(Rect(R.Left, R.Top, R.Left+1, R.Bottom));
+  UpdateRect(Rect(R.Left, R.Top, R.Left+1, R.Bottom));
   // Right
-  Update(Rect(R.Right-1, R.Top, R.Right, R.Bottom));
+  UpdateRect(Rect(R.Right-1, R.Top, R.Right, R.Bottom));
   // Top
-  Update(Rect(R.Left+1, R.Top, R.Right-1, R.Top+1));
+  UpdateRect(Rect(R.Left+1, R.Top, R.Right-1, R.Top+1));
   // Bottom
-  Update(Rect(R.Left+1, R.Bottom-1, R.Right-1, R.Bottom));
+  UpdateRect(Rect(R.Left+1, R.Bottom-1, R.Right-1, R.Bottom));
 end;
 
 procedure TRubberbandLayer.UpdateHandle(Buffer: TBitmap32; X, Y: TFloat);
@@ -2130,7 +2424,7 @@ begin
   HandleRect.Right := HandleRect.Left + Ceil(FHandleSize*2);
   HandleRect.Top := Floor(Y - FHandleSize);
   HandleRect.Bottom := HandleRect.Top + Ceil(FHandleSize*2);
-  Update(HandleRect);
+  UpdateRect(HandleRect);
 end;
 
 procedure TRubberbandLayer.Update;

@@ -82,7 +82,12 @@ type
 implementation
 
 uses
-  Math, GR32_VectorUtils, GR32_Math, GR32_LowLevel, GR32_Blend;
+  Math,
+  Types,
+  GR32_VectorUtils,
+  GR32_Math,
+  GR32_LowLevel,
+  GR32_Blend;
 
 { TPolygonRenderer32VPR2 }
 
@@ -305,10 +310,8 @@ begin
 end;
 {$IFDEF UseStackAlloc}{$W-}{$ENDIF}
 
-{$ifndef COMPILERXE2_UP}
 type
   TRoundingMode = Math.TFPURoundingMode;
-{$endif COMPILERXE2_UP}
 
 procedure TPolygonRenderer32VPR2.PolyPolygonFS(
   const Points: TArrayOfArrayOfFloatPoint; const ClipRect: TFloatRect);
@@ -565,7 +568,11 @@ begin
 
   // temporary fix for floating point rounding errors
   R := ClipRect;
-  InflateRect(R, -0.05, -0.05);
+{$ifndef FPC}
+  R.Inflate(-0.05, -0.05);
+{$else}
+  GR32.InflateRect(R, -0.05, -0.05);
+{$endif}
 
   SetLength(FXSpan, Bitmap.Height);
   for I := 0 to High(FXSpan) do

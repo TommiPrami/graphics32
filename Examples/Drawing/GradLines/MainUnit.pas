@@ -38,9 +38,11 @@ interface
 
 uses
   {$IFDEF FPC} LCLIntf, LResources, Buttons, {$ENDIF} SysUtils, Classes, 
-  Graphics, Controls, Forms, Dialogs, StdCtrls, ExtCtrls, 
-  {$IFDEF COMPILERXE2_UP}Types, {$ENDIF}
-  GR32, GR32_Blend, GR32_Image, GR32_LowLevel;
+  Graphics, Controls, Forms, Dialogs, StdCtrls, ExtCtrls, Types,
+  GR32,
+  GR32_Blend,
+  GR32_Image,
+  GR32_LowLevel;
 
 type
   TVector2f = record
@@ -83,16 +85,18 @@ type
     procedure RgpFadeClick(Sender: TObject);
     procedure RgpDrawClick(Sender: TObject);
     procedure TimerFrameRateTimer(Sender: TObject);
+    procedure FormKeyDown(Sender: TObject; var Key: Word; Shift: TShiftState);
   protected
+    FBenchMark: boolean;
+    FBenchMarkCounter: integer;
     Lines: array of TLine;
-    P: TPoint; // mouse shift
-    M: Boolean; // mouse down flag
     FadeCount: Integer;
     Pass: Integer;
     DrawPasses: Integer;
     FrameCount: integer;
     LastCheck: Cardinal;
     procedure AppEventsIdle(Sender: TObject; var Done: Boolean);
+    procedure StartBenchmark;
   public
     procedure AddLine;
     procedure AddLines(N: Integer);
@@ -228,6 +232,18 @@ begin
   FadeCount := 0;
   DrawPasses := 2;
   Application.OnIdle := AppEventsIdle;
+
+  if (FindCmdLineSwitch('benchmark')) then
+    StartBenchmark;
+end;
+
+procedure TFormGradientLines.FormKeyDown(Sender: TObject; var Key: Word; Shift: TShiftState);
+begin
+  if (Key <> VK_F1) then
+    exit;
+  Key := 0;
+
+  StartBenchmark;
 end;
 
 procedure TFormGradientLines.AddLine;
@@ -268,7 +284,8 @@ begin
 
   if (Length(Lines) = 0) then
     exit;
-//  PaintBox.BeginUpdate;
+
+  PaintBox.BeginUpdate;
   try
     for J := 0 to DrawPasses - 1 do
       for I := 0 to High(Lines) do
@@ -279,10 +296,10 @@ begin
 
     if FadeCount > 0 then
     begin
-      if Pass = 0 then with PaintBox.Buffer do
+      if Pass = 0 then
       begin
-        P := @Bits[0];
-        for I := 0 to Width * Height -1 do
+        P := @PaintBox.Buffer.Bits[0];
+        for I := 0 to PaintBox.Buffer.Width * PaintBox.Buffer.Height -1 do
         begin
           BlendMem($10000000, P^);
           Inc(P);
@@ -290,19 +307,24 @@ begin
         EMMS;
       end;
       Dec(Pass);
-      if (Pass < 0) or (Pass > FadeCount) then Pass := FadeCount;
+      if (Pass < 0) or (Pass > FadeCount) then
+        Pass := FadeCount;
 
-      // we're doing unsafe operations above, so force a complete invalidation
-      // so that wrong output of repaint optimizer doesn't show.
+      // We're modifying the buffer directly above, so force a complete invalidation.
       PaintBox.ForceFullInvalidate;
-    end
-    else
-      ;//PaintBox.Invalidate;
+    end;
 
   finally
-//    PaintBox.EndUpdate;
+    PaintBox.EndUpdate;
   end;
   Inc(FrameCount);
+
+  if (FBenchMark) then
+  begin
+    Dec(FBenchMarkCounter);
+    if (FBenchMarkCounter <= 0) then
+      Application.Terminate;
+  end;
 end;
 
 procedure TFormGradientLines.BtnAddOneClick(Sender: TObject);
@@ -348,6 +370,19 @@ begin
   RepaintOpt.Enabled := (FadeCount = 0);
 end;
 
+procedure TFormGradientLines.StartBenchmark;
+begin
+  FBenchMark := True;
+  FBenchMarkCounter := 100*1000;
+
+  WindowState := wsMaximized;
+  RgpDraw.ItemIndex := 2; // Fast draw
+  RgpFade.ItemIndex := 0; // No fade
+  RepaintOpt.Checked := True; // Repaint optimizer
+
+  BtnAddTen.Click;
+end;
+
 procedure TFormGradientLines.TimerFrameRateTimer(Sender: TObject);
 var
   TimeElapsed: Cardinal;
@@ -357,7 +392,10 @@ begin
   TimeElapsed := GetTickCount - LastCheck;
 
   FPS := FrameCount / (TimeElapsed / 1000);
-  Caption := Format('%.0n fps', [FPS]);
+  if (FBenchMark) then
+    Caption := Format('%.0n fps (%.0n)', [FPS, 1.0 * FBenchMarkCounter])
+  else
+    Caption := Format('%.0n fps', [FPS]);
 
   FrameCount := 0;
   LastCheck := GetTickCount;

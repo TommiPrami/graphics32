@@ -28,11 +28,7 @@ unit GR32_VPR;
  * Portions created by the Initial Developer are Copyright (C) 2008-2012
  * the Initial Developer. All Rights Reserved.
  *
- * Contributor(s):
- *
  * ***** END LICENSE BLOCK ***** *)
-
-{$define VPR_CACHE}
 
 interface
 
@@ -63,7 +59,7 @@ procedure RenderPolygon(const Points: TArrayOfFloatPoint;
 
 implementation
 
-{$if Defined(COMPILERFPC) and Defined(CPUx86_64) }
+{$if Defined(FPC) and Defined(CPUx86_64) }
 // Must apply work around for negative array index on FPC 64-bit.
 // See:
 //   - https://github.com/graphics32/graphics32/issues/51
@@ -72,7 +68,10 @@ implementation
 {$ifend}
 
 uses
-  Math, GR32_Math, GR32_LowLevel, GR32_VectorUtils;
+  Math,
+  GR32_Math,
+  GR32_LowLevel,
+  GR32_VectorUtils;
 
 (* Mattias Andersson (from glmhlg$rf3$1@news.graphics32.org):
 
@@ -336,19 +335,6 @@ begin
   end;
 end;
 
-{$ifdef VPR_CACHE}
-const
-  MinLineSegmentCacheSize: Cardinal = 64*1024;
-  MaxLineSegmentCacheSize: Cardinal = 256*1024;
-  GrowLineSegmentCacheSize: Cardinal = 32*1024;
-
-var
-  LineSegmentCache: PLineSegment;
-  LineSegmentCacheSize: Cardinal;
-  LineSegmentCacheHitCount: Int64;
-  LineSegmentCacheMissCount: Int64;
-{$endif VPR_CACHE}
-
 procedure BuildScanLines(const Points: TArrayOfArrayOfFloatPoint;
   out ScanLines: TScanLines);
 var
@@ -424,44 +410,11 @@ begin
   (*
   ** Allocate memory
   *)
-{$ifdef VPR_CACHE}
-  J := 0;
-  var Size: Cardinal := 0;
-  for I := 0 to High(ScanLines) do
-  begin
-    Inc(J, ScanLines[I].Count);
-    Inc(Size, J * SizeOf(TLineSegment));
-  end;
-
-  var p: PLineSegment;
-
-  if (Size > LineSegmentCacheSize) then
-  begin
-    Inc(LineSegmentCacheMissCount);
-
-    if (Size < MinLineSegmentCacheSize) then
-      LineSegmentCacheSize := MinLineSegmentCacheSize
-    else
-      LineSegmentCacheSize := (Size + GrowLineSegmentCacheSize - 1) and (not (GrowLineSegmentCacheSize-1));
-
-    ReallocMem(LineSegmentCache, LineSegmentCacheSize);
-  end else
-    Inc(LineSegmentCacheHitCount);
-
-  p := LineSegmentCache;
-{$endif VPR_CACHE}
-
   J := 0;
   for I := 0 to High(ScanLines) do
   begin
-{$ifdef VPR_CACHE}
-    ScanLines[I].Segments := PLineSegmentArray(p);
-    Inc(J, ScanLines[I].Count);
-    Inc(p, J);
-{$else VPR_CACHE}
     Inc(J, ScanLines[I].Count);
     GetMem(ScanLines[I].Segments, J * SizeOf(TLineSegment));
-{$endif VPR_CACHE}
 
     ScanLines[I].Count := 0;
     ScanLines[I].Y := YMin + I;
@@ -519,21 +472,10 @@ begin
   end;
 end;
 
-{$ifndef COMPILERXE2_UP}
+{$ifdef FPC}
 type
   TRoundingMode = Math.TFPURoundingMode;
-{$endif COMPILERXE2_UP}
-
-{$ifdef VPR_CACHE}
-const
-  MinSpanDataCacheSize: Cardinal = 16*1024;
-  MaxSpanDataCacheSize: Cardinal = 256*1024;
-  GrowSpanDataCacheSize: Cardinal = 8*1024;
-
-var
-  SpanDataCache: PSingleArray;
-  SpanDataCacheSize: Cardinal;
-{$endif VPR_CACHE}
+{$endif}
 
 procedure RenderPolyPolygon(const Points: TArrayOfArrayOfFloatPoint;
   const ClipRect: TFloatRect; const RenderProc: TRenderSpanProc; Data: Pointer);
@@ -544,9 +486,6 @@ var
   SavedRoundMode: TRoundingMode;
   CX1, CX2: Integer;
   SpanData: PSingleArray;
-{$ifdef VPR_CACHE}
-  Size: Cardinal;
-{$endif VPR_CACHE}
 begin
   Len := Length(Points);
   if Len = 0 then
@@ -567,49 +506,17 @@ begin
 
       I := CX2 - CX1 + 4;
 
-{$ifdef VPR_CACHE}
-      Size := I * SizeOf(Single);
-      if (Size > SpanDataCacheSize) then
-      begin
-        if (Size < MinSpanDataCacheSize) then
-          SpanDataCacheSize := MinSpanDataCacheSize
-        else
-          SpanDataCacheSize := (Size + GrowSpanDataCacheSize - 1) and (not (GrowSpanDataCacheSize-1));
-
-        GetMem(SpanDataCache, SpanDataCacheSize);
-      end;
-      SpanData := SpanDataCache;
-{$else VPR_CACHE}
       GetMem(SpanData, I * SizeOf(Single));
-{$endif VPR_CACHE}
 
       FillLongWord(SpanData^, I, 0);
 
       for I := 0 to High(ScanLines) do
       begin
         RenderScanline(ScanLines[I], RenderProc, Data, @SpanData[-CX1 + 1], CX1, CX2);
-{$ifndef VPR_CACHE}
         FreeMem(ScanLines[I].Segments);
-{$endif VPR_CACHE}
       end;
 
-{$ifdef VPR_CACHE}
-      if (LineSegmentCacheSize > MaxLineSegmentCacheSize) then
-      begin
-        FreeMem(LineSegmentCache);
-        LineSegmentCache := nil;
-        LineSegmentCacheSize := 0;
-      end;
-
-      if (SpanDataCacheSize > MaxSpanDataCacheSize) then
-      begin
-        FreeMem(SpanDataCache);
-        SpanDataCache := nil;
-        SpanDataCacheSize := 0;
-      end;
-{$else VPR_CACHE}
       FreeMem(SpanData);
-{$endif VPR_CACHE}
     end;
   finally
     SetRoundMode(SavedRoundMode);
@@ -634,12 +541,4 @@ begin
   RenderPolygon(Points, ClipRect, TRenderSpanProc(TMethod(RenderProc).Code), TMethod(RenderProc).Data);
 end;
 
-initialization
-finalization
-{$ifdef VPR_CACHE}
-  if (LineSegmentCache <> nil) then
-    FreeMem(LineSegmentCache);
-  if (SpanDataCache <> nil) then
-    FreeMem(SpanDataCache);
-{$endif VPR_CACHE}
 end.

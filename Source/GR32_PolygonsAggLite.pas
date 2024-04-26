@@ -1688,7 +1688,7 @@ var
   R: TFloatRect;
 begin
   R := ClipRect;
-  InflateRect(R, 0.05, 0.05);
+  GR32.InflateRect(R, 0.05, 0.05);
   APoints := ClipPolygon (Points, R);
 
   OutLine := TOutline.Create;
@@ -1745,7 +1745,7 @@ begin
   APoints := Points;
   // temporary fix for floating point rounding errors - corr. - to + by pws
   R := ClipRect;
-  InflateRect(R, 0.05, 0.05);
+  GR32.InflateRect(R, 0.05, 0.05);
   FirstValid := -1;
   for i := 0 to High(APoints) do
   begin
@@ -1830,16 +1830,16 @@ begin
   FillSpanRegistry.RegisterBinding(FID_FILLSPAN, @@FILLSPAN);
 
   // pure pascal
-  FillSpanRegistry.Add(FID_FILLSPAN, @FILLSPAN_Pas, [], FillSpanBindingFlagPascal);
+  FillSpanRegistry.Add(FID_FILLSPAN, @FILLSPAN_Pas, FillSpanBindingFlagPascal);
 
 {$IFNDEF PUREPASCAL}
-  FillSpanRegistry.Add(FID_FILLSPAN, @FILLSPAN_ASM, [], 0, FillSpanRegistryPriorityASM);
+  FillSpanRegistry.Add(FID_FILLSPAN, @FILLSPAN_ASM, 0, FillSpanRegistryPriorityASM);
 {$IFNDEF OMIT_MMX}
-  FillSpanRegistry.Add(FID_FILLSPAN, @FILLSPAN_MMX, [ciMMX], 0, FillSpanRegistryPriorityMMX);
+  FillSpanRegistry.Add(FID_FILLSPAN, @FILLSPAN_MMX, [isMMX], 0, FillSpanRegistryPriorityMMX);
 {$ENDIF}
 
 {$IFNDEF OMIT_SSE2}
-  FillSpanRegistry.Add(FID_FILLSPAN, @FILLSPAN_SSE2, [ciSSE2], 0, FillSpanRegistryPrioritySSE2);
+  FillSpanRegistry.Add(FID_FILLSPAN, @FILLSPAN_SSE2, [isSSE2], 0, FillSpanRegistryPrioritySSE2);
 {$ENDIF}
 {$ENDIF}
 

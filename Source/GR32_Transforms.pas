@@ -28,13 +28,6 @@ unit GR32_Transforms;
  * Portions created by the Initial Developer are Copyright (C) 2000-2009
  * the Initial Developer. All Rights Reserved.
  *
- * Contributor(s):
- *   Andre Beckedorf <Andre@metaException.de>
- *   Mattias Andersson <Mattias@Centaurix.com>
- *   J. Tulach <tulach@position.cz>
- *   Michael Hansen <dyster_tid@hotmail.com>
- *   Peter Larson
- *
  * ***** END LICENSE BLOCK ***** *)
 
 interface
@@ -42,12 +35,15 @@ interface
 {$I GR32.inc}
 
 uses
-{$IFDEF FPC}
-  LCLIntf,
-{$ELSE}
-  Windows,
+{$IFDEF DEBUG}
+  Windows, // In interface section so we don't override TFixed
 {$ENDIF}
-  SysUtils, Classes, Types, GR32, GR32_VectorMaps, GR32_Rasterizers;
+  SysUtils,
+  Classes,
+  Types,
+  GR32,
+  GR32_VectorMaps,
+  GR32_Rasterizers;
 
 type
   ETransformError = class(Exception);
@@ -351,12 +347,9 @@ type
 function TransformPoints(Points: TArrayOfArrayOfFixedPoint; Transformation: TTransformation): TArrayOfArrayOfFixedPoint;
 
 procedure Transform(Dst, Src: TCustomBitmap32; Transformation: TTransformation; Reverse: boolean = True); overload;
-procedure Transform(Dst, Src: TCustomBitmap32; Transformation: TTransformation;
-  const DstClip: TRect; Reverse: boolean = True); overload;
-procedure Transform(Dst, Src: TCustomBitmap32; Transformation: TTransformation;
-  Rasterizer: TRasterizer; Reverse: boolean = True); overload;
-procedure Transform(Dst, Src: TCustomBitmap32; Transformation: TTransformation;
-  Rasterizer: TRasterizer; const DstClip: TRect; Reverse: boolean = True); overload;
+procedure Transform(Dst, Src: TCustomBitmap32; Transformation: TTransformation; const DstClip: TRect; Reverse: boolean = True); overload;
+procedure Transform(Dst, Src: TCustomBitmap32; Transformation: TTransformation; Rasterizer: TRasterizer; Reverse: boolean = True); overload;
+procedure Transform(Dst, Src: TCustomBitmap32; Transformation: TTransformation; Rasterizer: TRasterizer; const DstClip: TRect; Reverse: boolean = True); overload;
 
 procedure RasterizeTransformation(Vectormap: TVectormap;
   Transformation: TTransformation; DstRect: TRect;
@@ -377,8 +370,13 @@ resourcestring
 implementation
 
 uses
-  Math, GR32_Blend, GR32_LowLevel, GR32_Math, GR32_Bindings,
-  GR32_Resamplers, GR32_Geometry;
+  Math,
+  GR32_Blend,
+  GR32_LowLevel,
+  GR32_Math,
+  GR32_Bindings,
+  GR32_Resamplers,
+  GR32_Geometry;
 
 resourcestring
   RCStrSrcRectIsEmpty = 'SrcRect is empty!';
@@ -386,7 +384,7 @@ resourcestring
   RStrStackEmpty = 'Stack empty';
 
 type
-  {provides access to proctected members of TCustomBitmap32 by typecasting}
+  {provides access to proctected members of TTransformation by typecasting}
   TTransformationAccess = class(TTransformation);
 
 var
@@ -679,8 +677,7 @@ begin
   ReverseTransformInt(P.X, P.Y, Result.X, Result.Y);
 end;
 
-procedure TTransformation.ReverseTransformFixed(DstX, DstY: TFixed;
-  out SrcX, SrcY: TFixed);
+procedure TTransformation.ReverseTransformFixed(DstX, DstY: TFixed; out SrcX, SrcY: TFixed);
 var
   X, Y: TFloat;
 begin
@@ -1659,7 +1656,7 @@ function TDisturbanceTransformation.GetTransformedBounds(
   const ASrcRect: TFloatRect): TFloatRect;
 begin
   Result := ASrcRect;
-  InflateRect(Result, 0.5 * FDisturbance, 0.5 * FDisturbance);
+  GR32.InflateRect(Result, 0.5 * FDisturbance, 0.5 * FDisturbance);
 end;
 
 procedure TDisturbanceTransformation.ReverseTransformFloat(DstX,
@@ -1793,11 +1790,7 @@ begin
       Map[i] := 1;
   end;
 {$IFDEF DEBUG}
-  // Delphi 2010 doesn't have overloads for Min/MaxValue(array of single)
-  // https://github.com/graphics32/graphics32/issues/153
-  {$IFDEF COMPILERXE1_UP}
   OutputDebugString(PChar(Format('TRadialDistortionTransformation.PrepareReverseMap: MinValue(Map)=%f MaxValue(Map)=%f', [ MinValue(Map), MaxValue(Map) ])));
-  {$ENDIF}
 {$ENDIF}
 end;
 
@@ -1805,9 +1798,9 @@ procedure TRadialDistortionTransformation.PrepareTransform;
 var
   r: TRect;
 begin
-  if IsRectEmpty(SrcRect) then
+  if GR32.IsRectEmpty(SrcRect) then
     raise Exception.Create(RCStrSrcRectIsEmpty);
-  TransformValid := not IsRectEmpty(SrcRect);
+  TransformValid := not GR32.IsRectEmpty(SrcRect);
   if Not TransformValid then
     Exit;
 
@@ -1919,9 +1912,9 @@ end;
 
 procedure TRemapTransformation.PrepareTransform;
 begin
-  if IsRectEmpty(SrcRect) then
+  if GR32.IsRectEmpty(SrcRect) then
     raise Exception.Create(RCStrSrcRectIsEmpty);
-  if IsRectEmpty(FMappingRect) then
+  if GR32.IsRectEmpty(FMappingRect) then
     raise Exception.Create(RCStrMappingRectIsEmpty);
   with SrcRect do
   begin
@@ -2145,18 +2138,18 @@ begin
   Registry := NewRegistry('GR32_Transforms bindings');
   Registry.RegisterBinding(FID_DETERMINANT32, @@DET32);
 
-  Registry.Add(FID_DETERMINANT32, @DET32_Pas, []);
+  Registry.Add(FID_DETERMINANT32, @DET32_Pas);
   {$IFNDEF PUREPASCAL}
-  Registry.Add(FID_DETERMINANT32, @DET32_ASM, []);
-//  Registry.Add(FID_DETERMINANT32, @DET32_SSE2, [ciSSE2]);
+  Registry.Add(FID_DETERMINANT32, @DET32_ASM);
+//  Registry.Add(FID_DETERMINANT32, @DET32_SSE2, [isSSE2]);
   {$ENDIF}
 
   Registry.RegisterBinding(FID_DETERMINANT64, @@DET64);
 
-  Registry.Add(FID_DETERMINANT64, @DET64_Pas, []);
+  Registry.Add(FID_DETERMINANT64, @DET64_Pas);
   {$IFNDEF PUREPASCAL}
-  Registry.Add(FID_DETERMINANT64, @DET64_ASM, []);
-//  Registry.Add(FID_DETERMINANT64, @DET64_SSE2, [ciSSE2]);
+  Registry.Add(FID_DETERMINANT64, @DET64_ASM);
+//  Registry.Add(FID_DETERMINANT64, @DET64_SSE2, [isSSE2]);
   {$ENDIF}
 
   Registry.RebindAll;

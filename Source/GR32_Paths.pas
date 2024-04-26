@@ -106,7 +106,7 @@ type
 
     // Polylines
     procedure Arc(const P: TFloatPoint; StartAngle, EndAngle, Radius: TFloat);
-    procedure PolyLine(const APoints: TArrayOfFloatPoint); virtual;
+    procedure PolyLine(const APoints: TArrayOfFloatPoint; AOffset: integer = 0); virtual;
     procedure PolyPolyLine(const APoints: TArrayOfArrayOfFloatPoint); virtual;
 
     // Closed Polygons
@@ -213,7 +213,7 @@ type
 implementation
 
 uses
-  Math, {$IFDEF FPC}Types, {$ENDIF} {$IFDEF COMPILERXE2_UP}Types, {$ENDIF}
+  Types,
   GR32_Backends,
   GR32_VectorUtils;
 
@@ -536,7 +536,9 @@ begin
   BeginUpdate;
 
   MoveTo(APoints[0]); // Implicitly ends any current path
-  PolyLine(APoints);
+
+  // Offset=1 because we've already added the first vertex
+  PolyLine(APoints, 1);
   EndPath(True);
 
   EndUpdate;
@@ -557,16 +559,16 @@ begin
   EndUpdate;
 end;
 
-procedure TCustomPath.PolyLine(const APoints: TArrayOfFloatPoint);
+procedure TCustomPath.PolyLine(const APoints: TArrayOfFloatPoint; AOffset: integer);
 var
   i: Integer;
 begin
-  if Length(APoints) = 0 then
+  if (AOffset > High(APoints)) then
     Exit;
 
   BeginUpdate;
 
-  for i := 0 to High(APoints) do
+  for i := AOffset to High(APoints) do
     LineTo(APoints[i]);
 
   EndUpdate;
@@ -838,7 +840,7 @@ begin
   begin
     for i := 0 to FBrushes.Count-1 do
       if FBrushes[i].Visible then
-        FBrushes[i].PolyPolygonFS(Renderer, Path.Path, ClipRect, Transformation, Path.PathClosed);
+        FBrushes[i].PolyPolygonMixedFS(Renderer, Path.Path, ClipRect, Transformation, Path.PathClosed);
   end;
 end;
 

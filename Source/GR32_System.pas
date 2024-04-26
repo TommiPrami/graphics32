@@ -23,16 +23,10 @@ unit GR32_System;
  * The Original Code is Graphics32
  *
  * The Initial Developer of the Original Code is
- * Alex A. Denisov
+ * Andre Beckedorf, Michael Hansen <dyster_tid@hotmail.com>
  *
  * Portions created by the Initial Developer are Copyright (C) 2000-2009
  * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *  Andre Beckedorf
- *  Michael Hansen <dyster_tid@hotmail.com>
- *    - CPU type & feature-set aware function binding
- *    - Runtime function template and extension binding system
  *
  * ***** END LICENSE BLOCK ***** *)
 
@@ -40,31 +34,26 @@ interface
 
 {$I GR32.inc}
 
+{$IFNDEF PUREPASCAL}
 uses
-{$IFDEF FPC}
-  LCLIntf, LCLType,
-  {$IFDEF Windows}
-    Windows,
-  {$ENDIF}
-  {$IFDEF UNIX}
-    Unix, BaseUnix,
-  {$ENDIF}
-{$ELSE}
-  Windows,
+  GR32.CPUID;
 {$ENDIF}
-  SysUtils;
 
+//------------------------------------------------------------------------------
+//
+//      Performance timer
+//
+//------------------------------------------------------------------------------
 type
   TPerfTimer = class
   private
-{$IFDEF UNIX}
+{$if defined(Windows)}
+    FFrequency, FPerformanceCountStart, FPerformanceCountStop: Int64;
+{$elseif defined(UNIX)}
   {$IFDEF FPC}
     FStart: Int64;
   {$ENDIF}
-{$ENDIF}
-{$IFDEF Windows}
-    FFrequency, FPerformanceCountStart, FPerformanceCountStop: Int64;
-{$ENDIF}
+{$ifend}
   public
     procedure Start;
     function ReadNanoseconds: string;
@@ -74,94 +63,160 @@ type
     function ReadValue: Int64;
   end;
 
+var
+  GlobalPerfTimer: TPerfTimer;
+
+
+//------------------------------------------------------------------------------
+//
+//      Portable GetTickCount
+//
+//------------------------------------------------------------------------------
 { Pseudo GetTickCount implementation for Linux - for compatibility
   This works for basic time testing, however, it doesnt work like its
   Windows counterpart, ie. it doesnt return the number of milliseconds since
   system boot. Will definitely overflow. }
-function GetTickCount: Cardinal;
+function GetTickCount: UInt64;
 
+
+//------------------------------------------------------------------------------
+//
+//      Processor and core management
+//
+//------------------------------------------------------------------------------
 { Returns the number of processors configured by the operating system. }
 function GetProcessorCount: Cardinal;
 
+// Set process affinity to exclude efficiency cores
+function SetPerformanceAffinityMask(Force: boolean = False): boolean;
+procedure RestoreAffinityMask;
+
+
+//------------------------------------------------------------------------------
+//
+//      Legacy CPU features
+//
+//------------------------------------------------------------------------------
+(*
+** Legacy HasInstructionSet and CPUFeatures functions
+*)
 type
-  {$IFNDEF PUREPASCAL}
-  { TCPUInstructionSet, defines specific CPU technologies }
-  TCPUInstructionSet = (ciMMX, ciEMMX, ciSSE, ciSSE2, ci3DNow, ci3DNowExt);
-  {$ELSE}
-  TCPUInstructionSet = (ciDummy);
+{$IFNDEF PUREPASCAL}
+  { TCPUFeature, previously TCPUInstructionSet, defines specific CPU technologies }
+  TCPUFeature = (ciMMX, ciEMMX, ciSSE, ciSSE2, ci3DNow, ci3DNowExt);
+{$ELSE}
+  TCPUFeature = (ciDummy);
   {$DEFINE NO_REQUIREMENTS}
-  {$ENDIF}
+{$ENDIF}
 
   PCPUFeatures = ^TCPUFeatures;
-  TCPUFeatures = set of TCPUInstructionSet;
+  TCPUFeatures = set of TCPUFeature;
 
 { General function that returns whether a particular instruction set is
   supported for the current CPU or not }
-function HasInstructionSet(const InstructionSet: TCPUInstructionSet): Boolean;
-function CPUFeatures: TCPUFeatures;
+function HasInstructionSet(const InstructionSet: TCPUFeature): Boolean; deprecated 'Use CPU.InstructionSupport instead';
+function CPUFeatures: TCPUFeatures; deprecated 'Use CPU.InstructionSupport instead';
+
+{$IFNDEF PUREPASCAL}
+const
+  InstructionSetMap: array[TCPUFeature] of TCPUInstructionSet = (isMMX, isExMMX, isSSE, isSSE2, is3DNow, isEx3DNow);
+{$ELSE}
+type
+  TCPUInstructionSet = (siDummy);
+const
+  InstructionSetMap: array[TCPUFeature] of TCPUInstructionSet = (siDummy);
+type
+  TInstructionSupport = set of TCPUInstructionSet;
+{$ENDIF}
+
+// Migration support: TCPUFeatures->TInstructionSupport
+function CPUFeaturesToInstructionSupport(CPUFeatures: TCPUFeatures): TInstructionSupport;
+
+
+
+//------------------------------------------------------------------------------
+//
+//      CPU features
+//
+//------------------------------------------------------------------------------
+// For use in CPU dispatch bindings
+//------------------------------------------------------------------------------
+(*
+** GR32.CPUID CPU feature detection
+*)
+// Convenience aliases. For the most common usage, this avoids the need to use GR32.CPUID directly.
+{$IFNDEF PUREPASCAL}
+type
+  TCPU = GR32.CPUID.TCPU;
+  TInstructionSupport = GR32.CPUID.TInstructionSupport;
+  TCPUInstructionSet = GR32.CPUID.TCPUInstructionSet;
+
+const
+  isMMX = GR32.CPUID.TCPUInstructionSet.isMMX;
+  isExMMX = GR32.CPUID.TCPUInstructionSet.isExMMX;
+  isSSE = GR32.CPUID.TCPUInstructionSet.isSSE;
+  isSSE2 = GR32.CPUID.TCPUInstructionSet.isSSE2;
+  isSSE3 = GR32.CPUID.TCPUInstructionSet.isSSE3;
+  isSSSE3 = GR32.CPUID.TCPUInstructionSet.isSSSE3;
+  isSSE41 = GR32.CPUID.TCPUInstructionSet.isSSE41;
+  isSSE42 = GR32.CPUID.TCPUInstructionSet.isSSE42;
+  isAVX = GR32.CPUID.TCPUInstructionSet.isAVX;
+  isAVX2 = GR32.CPUID.TCPUInstructionSet.isAVX2;
+  isAVX512f = GR32.CPUID.TCPUInstructionSet.isAVX512f;
+{$ELSE}
+type
+  TCPU = record
+    InstructionSupport: TInstructionSupport;
+  end;
+{$ENDIF}
 
 var
-  GlobalPerfTimer: TPerfTimer;
+  CPU: TCPU;
+
+
+//------------------------------------------------------------------------------
+//------------------------------------------------------------------------------
+//------------------------------------------------------------------------------
 
 implementation
 
 uses
-  Forms, Classes, TypInfo;
+{$ifndef FPC}
+  System.Diagnostics,
+{$endif}
+{$ifdef WINDOWS}
+  Windows,
+{$endif}
+  SysUtils,
+  Classes;
 
+//------------------------------------------------------------------------------
+//
+//      GetTickCount
+//
+//------------------------------------------------------------------------------
+{$if not defined(FPC)}
 var
-  CPUFeaturesInitialized : Boolean = False;
-  CPUFeaturesData: TCPUFeatures;
+  TickCounter: TStopwatch;
 
-{$IFDEF UNIX}
-{$IFDEF FPC}
-function GetTickCount: Cardinal;
-var
-  t : timeval;
+function GetTickCount: UInt64;
 begin
-  fpgettimeofday(@t,nil);
-   // Build a 64 bit microsecond tick from the seconds and microsecond longints
-  Result := (Int64(t.tv_sec) * 1000000) + t.tv_usec;
+  Result := UInt64(TickCounter.ElapsedMilliseconds);
 end;
-
-
-{ TPerfTimer }
-
-function TPerfTimer.ReadNanoseconds: string;
+{$else}
+function GetTickCount: UInt64;
 begin
-  Result := IntToStr(ReadValue);
+  Result := SysUtils.GetTickCount64;
 end;
-
-function TPerfTimer.ReadMilliseconds: string;
-begin
-  Result := IntToStr(ReadValue div 1000);
-end;
-
-function TPerfTimer.ReadSeconds: string;
-begin
-  Result := IntToStr(ReadValue div 1000000);
-end;
-
-function TPerfTimer.ReadValue: Int64;
-begin
-  Result := GetTickCount - FStart;
-end;
-
-procedure TPerfTimer.Start;
-begin
-  FStart := GetTickCount;
-end;
-{$ENDIF}
-{$ENDIF}
-
-{$IFDEF Windows}
-function GetTickCount: Cardinal;
-begin
-  Result := Windows.GetTickCount;
-end;
+{$ifend}
 
 
-{ TPerfTimer }
-
+//------------------------------------------------------------------------------
+//
+//      Performance timer
+//
+//------------------------------------------------------------------------------
+{$if defined(Windows)}
 function TPerfTimer.ReadNanoseconds: string;
 begin
   QueryPerformanceCounter(FPerformanceCountStop);
@@ -200,227 +255,235 @@ procedure TPerfTimer.Start;
 begin
   QueryPerformanceCounter(FPerformanceCountStart);
 end;
-{$ENDIF}
-
-{$IFDEF UNIX}
+{$elseif defined(UNIX)}
 {$IFDEF FPC}
-function GetProcessorCount: Cardinal;
+function TPerfTimer.ReadNanoseconds: string;
 begin
-  Result := 1;
+  Result := IntToStr(ReadValue);
+end;
+
+function TPerfTimer.ReadMilliseconds: string;
+begin
+  Result := IntToStr(ReadValue div 1000);
+end;
+
+function TPerfTimer.ReadSeconds: string;
+begin
+  Result := IntToStr(ReadValue div 1000000);
+end;
+
+function TPerfTimer.ReadValue: Int64;
+begin
+  Result := GetTickCount - FStart;
+end;
+
+procedure TPerfTimer.Start;
+begin
+  FStart := GetTickCount;
 end;
 {$ENDIF}
-{$ENDIF}
-{$IFDEF Windows}
+{$ifend}
+
+
+//------------------------------------------------------------------------------
+//
+//      Processor and core management
+//
+//------------------------------------------------------------------------------
 function GetProcessorCount: Cardinal;
+{$IFNDEF FPC}
+begin
+  Result := CPUCount;
+end;
+{$ELSE FPC}
+{$if defined(Windows)}
 var
   lpSysInfo: TSystemInfo;
 begin
   GetSystemInfo(lpSysInfo);
   Result := lpSysInfo.dwNumberOfProcessors;
 end;
-{$ENDIF}
-
-{$IFNDEF PUREPASCAL}
-const
-  CPUISChecks: array [TCPUInstructionSet] of Cardinal =
-    ($800000,  $400000, $2000000, $4000000, $80000000, $40000000);
-    {ciMMX  ,  ciEMMX,  ciSSE   , ciSSE2  , ci3DNow ,  ci3DNowExt}
-
-function CPUID_Available: Boolean; {$IFDEF FPC}assembler;{$ENDIF}
-asm
-{$IFDEF TARGET_x86}
-        MOV       EDX,False
-        PUSHFD
-        POP       EAX
-        MOV       ECX,EAX
-        XOR       EAX,$00200000
-        PUSH      EAX
-        POPFD
-        PUSHFD
-        POP       EAX
-        XOR       ECX,EAX
-        JZ        @1
-        MOV       EDX,True
-@1:     PUSH      EAX
-        POPFD
-        MOV       EAX,EDX
-{$ENDIF}
-{$IFDEF TARGET_x64}
-        MOV       EDX,False
-        PUSHFQ
-        POP       RAX
-        MOV       ECX,EAX
-        XOR       EAX,$00200000
-        PUSH      RAX
-        POPFQ
-        PUSHFQ
-        POP       RAX
-        XOR       ECX,EAX
-        JZ        @1
-        MOV       EDX,True
-@1:     PUSH      RAX
-        POPFQ
-        MOV       EAX,EDX
-{$ENDIF}
+{$elseif defined(UNIX)}
+begin
+  Result := 1;
 end;
+{$ifend}
+{$ENDIF}
 
-function CPU_Signature: Integer; {$IFDEF FPC}assembler;{$ENDIF}
-asm
-{$IFDEF TARGET_x86}
-        PUSH      EBX
-        MOV       EAX,1
-        {$IFDEF FPC}
-        CPUID
-        {$ELSE}
-        DW        $A20F   // CPUID
-        {$ENDIF}
-        POP       EBX
-{$ENDIF}
-{$IFDEF TARGET_x64}
-        PUSH      RBX
-        MOV       EAX,1
-        CPUID
-        POP       RBX
-{$ENDIF}
-end;
+//------------------------------------------------------------------------------
 
-function CPU_Features: Integer; {$IFDEF FPC}assembler;{$ENDIF}
-asm
-{$IFDEF TARGET_x86}
-        PUSH      EBX
-        MOV       EAX,1
-        {$IFDEF FPC}
-        CPUID
-        {$ELSE}
-        DW        $A20F   // CPUID
-        {$ENDIF}
-        POP       EBX
-        MOV       EAX,EDX
-{$ENDIF}
-{$IFDEF TARGET_x64}
-        PUSH      RBX
-        MOV       EAX,1
-        CPUID
-        POP       RBX
-        MOV       EAX,EDX
-{$ENDIF}
-end;
+{$if (defined(Windows)) and (not defined(FPC))}
+function SetPerformanceAffinityMask(Force: boolean): boolean;
+type
+  // Declaration in Delphi 11 lacks EfficiencyClass
+  TProcessorRelationship = record
+    Flags: BYTE;
+    EfficiencyClass: BYTE;
+    Reserved: array[0..19] of BYTE;
+    GroupCount: WORD;
+    GroupMask: array[0..0] of GROUP_AFFINITY;
+  end;
 
-function CPU_ExtensionsAvailable: Boolean; {$IFDEF FPC}assembler;{$ENDIF}
-asm
-{$IFDEF TARGET_x86}
-        PUSH      EBX
-        MOV       @Result, True
-        MOV       EAX, $80000000
-        {$IFDEF FPC}
-        CPUID
-        {$ELSE}
-        DW        $A20F   // CPUID
-        {$ENDIF}
-        CMP       EAX, $80000000
-        JBE       @NOEXTENSION
-        JMP       @EXIT
-      @NOEXTENSION:
-        MOV       @Result, False
-      @EXIT:
-        POP       EBX
-{$ENDIF}
-{$IFDEF TARGET_x64}
-        PUSH      RBX
-        MOV       @Result, True
-        MOV       EAX, $80000000
-        CPUID
-        CMP       EAX, $80000000
-        JBE       @NOEXTENSION
-        JMP       @EXIT
-        @NOEXTENSION:
-        MOV       @Result, False
-        @EXIT:
-        POP       RBX
-{$ENDIF}
-end;
-
-function CPU_ExtFeatures: Integer; {$IFDEF FPC}assembler;{$ENDIF}
-asm
-{$IFDEF TARGET_x86}
-        PUSH      EBX
-        MOV       EAX, $80000001
-        {$IFDEF FPC}
-        CPUID
-        {$ELSE}
-        DW        $A20F   // CPUID
-        {$ENDIF}
-        POP       EBX
-        MOV       EAX,EDX
-{$ENDIF}
-{$IFDEF TARGET_x64}
-        PUSH      RBX
-        MOV       EAX, $80000001
-        CPUID
-        POP       RBX
-        MOV       EAX,EDX
-{$ENDIF}
-end;
-
-function HasInstructionSet(const InstructionSet: TCPUInstructionSet): Boolean;
-// Must be implemented for each target CPU on which specific functions rely
+var
+  ProcessHandle: THandle;
+  ProcessMask, SystemMask: NativeUInt;
+  NewMask: NativeUInt;
+  Size: Cardinal;
+  ProcessorInfoBuffer: TBytes;
+  ProcessorInfo: PSystemLogicalProcessorInformationEx;
+  EfficiencyMap: array[Byte] of KAFFINITY;
+  CoreMask: ^KAFFINITY;
+  i: integer;
 begin
   Result := False;
-  if not CPUID_Available then Exit;                   // no CPUID available
-  if CPU_Signature shr 8 and $0F < 5 then Exit;       // not a Pentium class
 
-  case InstructionSet of
-    ci3DNow, ci3DNowExt:
-      {$IFNDEF FPC}
-      if not CPU_ExtensionsAvailable or (CPU_ExtFeatures and CPUISChecks[InstructionSet] = 0) then
-      {$ENDIF}
-        Exit;
-    ciEMMX:
-      begin
-        // check for SSE, necessary for Intel CPUs because they don't implement the
-        // extended info
-        if (CPU_Features and CPUISChecks[ciSSE] = 0) and
-          (not CPU_ExtensionsAvailable or (CPU_ExtFeatures and CPUISChecks[ciEMMX] = 0)) then
-          Exit;
-      end;
-  else
-    if CPU_Features and CPUISChecks[InstructionSet] = 0 then
-      Exit; // return -> instruction set not supported
+  // TProcessorRelationship.EfficiencyClass requires Windows 10
+  if (not CheckWin32Version(10, 0)) then
+    exit;
+
+  ProcessHandle := GetCurrentProcess();
+
+  GetProcessAffinityMask(ProcessHandle, ProcessMask, SystemMask);
+
+  // Punt if mask has already been modified
+  if (not Force) and (ProcessMask <> SystemMask) then
+    exit;
+
+  Size := 0;
+  if (not GetLogicalProcessorInformationEx(RelationProcessorCore, nil, Size)) then
+    if (GetLastError <> ERROR_INSUFFICIENT_BUFFER) then
+      exit;
+
+  SetLength(ProcessorInfoBuffer, Size);
+  ProcessorInfo := @ProcessorInfoBuffer[0];
+
+  if (not GetLogicalProcessorInformationEx(RelationProcessorCore, PSystemLogicalProcessorInformation(ProcessorInfo), Size)) then
+    exit;
+
+  ZeroMemory(@EfficiencyMap, SizeOf(EfficiencyMap));
+
+  // For each efficiency class create a core mask
+  while (Size > 0) do
+  begin
+    if (ProcessorInfo.Relationship = RelationProcessorCore) then
+    begin
+      CoreMask := @EfficiencyMap[TProcessorRelationship(ProcessorInfo.Processor).EfficiencyClass];
+
+      for i := 0 to ProcessorInfo.Processor.GroupCount-1 do
+        CoreMask^ := CoreMask^ or ProcessorInfo.Processor.GroupMask[i].Mask;
     end;
 
-  Result := True;
+    Dec(Size, ProcessorInfo.Size);
+    Inc(PByte(ProcessorInfo), ProcessorInfo.Size);
+  end;
+
+  // Create a mask for performance cores
+  NewMask := 0;
+  i := 0;
+  while (i < High(EfficiencyMap)) do
+  begin
+    if (EfficiencyMap[i] <> 0) then
+    begin
+      // Assume the first performance class is "efficiency". Skip it.
+      Inc(i);
+
+      while (i <= High(EfficiencyMap)) do
+      begin
+        NewMask := NewMask or EfficiencyMap[i];
+        Inc(i);
+      end;
+
+      break;
+    end;
+    Inc(i);
+  end;
+
+  // Set the new mask
+  NewMask := SystemMask and NewMask;
+  if (NewMask <> 0) and (NewMask <> ProcessMask) then
+  begin
+    SetProcessAffinityMask(ProcessHandle, NewMask);
+    Result := True;
+  end;
 end;
 
-{$ELSE}
+procedure RestoreAffinityMask;
+var
+  ProcessHandle: THandle;
+  ProcessMask, SystemMask: NativeUInt;
+begin
+  ProcessHandle := GetCurrentProcess();
 
-function HasInstructionSet(const InstructionSet: TCPUInstructionSet): Boolean;
+  GetProcessAffinityMask(ProcessHandle, ProcessMask, SystemMask);
+
+  if (ProcessMask <> SystemMask) then
+    SetProcessAffinityMask(ProcessHandle, SystemMask);
+end;
+
+{$else}
+function SetPerformanceAffinityMask(Force: boolean): boolean;
 begin
   Result := False;
 end;
-{$ENDIF}
 
-procedure InitCPUFeaturesData;
-var
-  I: TCPUInstructionSet;
+procedure RestoreAffinityMask;
 begin
-  if CPUFeaturesInitialized then Exit;
-
-  CPUFeaturesData := [];
-  for I := Low(TCPUInstructionSet) to High(TCPUInstructionSet) do
-    if HasInstructionSet(I) then CPUFeaturesData := CPUFeaturesData + [I];
-
-  CPUFeaturesInitialized := True;
 end;
+{$ifend}
+
+
+//------------------------------------------------------------------------------
+//
+//      Legacy CPU features
+//
+//------------------------------------------------------------------------------
+
+function CPUFeaturesToInstructionSupport(CPUFeatures: TCPUFeatures): TInstructionSupport;
+var
+  InstructionSet: TCPUFeature;
+begin
+  Result := [];
+  for InstructionSet in CPUFeatures do
+    Include(Result, InstructionSetMap[InstructionSet]);
+end;
+
+//------------------------------------------------------------------------------
+
+function HasInstructionSet(const InstructionSet: TCPUFeature): Boolean;
+begin
+{$IFNDEF PUREPASCAL}
+  Result := (InstructionSetMap[InstructionSet] in CPU.InstructionSupport);
+{$ELSE}
+  Result := False;
+{$ENDIF}
+end;
+
+//------------------------------------------------------------------------------
 
 function CPUFeatures: TCPUFeatures;
+var
+  InstructionSet: TCPUFeature;
 begin
-  if not CPUFeaturesInitialized then
-    InitCPUFeaturesData;
-  Result := CPUFeaturesData;
+  Result := [];
+  for InstructionSet := Low(TCPUFeature) to High(TCPUFeature) do
+    if (InstructionSetMap[InstructionSet] in CPU.InstructionSupport) then
+      Include(Result, InstructionSet);
 end;
 
+//------------------------------------------------------------------------------
+//------------------------------------------------------------------------------
+//------------------------------------------------------------------------------
+
 initialization
-  InitCPUFeaturesData;
+{$if not defined(FPC)}
+  TickCounter := TStopwatch.StartNew;
+{$ifend}
+
+{$IFNDEF PUREPASCAL}
+  CPU := TCPU.GetCPUInfo;
+{$ELSE}
+  CPU := Default(TCPU);
+{$ENDIF}
   GlobalPerfTimer := TPerfTimer.Create;
 
 finalization
